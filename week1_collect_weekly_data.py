@@ -1,32 +1,78 @@
-
 import requests
-from datetime import datetime,timedelta,timezone
-import random
-url_for_symbols="https://api.delta.exchange/v2/products"
-symbols_response=requests.get(url_for_symbols)
-if symbols_response.status_code==200:
-    products=symbols_response.json()['result']
-    active_symbols=[p['symbol'] for p in products if 'symbol' in p]
-    if not active_symbols:
-        raise Exception("No active symbols found")
-    symbol=random.choice(active_symbols)
-else:
-    raise Exception("Failed to fetch product list from Delta Exchange.")
-print(f"Collecting data for symbol: {symbol}")
+import sqlite3
+from datetime import datetime, timedelta, timezone
 
-resolution="1h"
-end_time=datetime.now(timezone.utc)
-start_time=end_time-timedelta(days=7)
-start_timestamp=int(start_time.timestamp())
-end_timestamp=int(end_time.timestamp())
+DB_NAME = "btc_options_week.db"
 
-url="https://api.delta.exchange/v2/history/candles"
-params={"symbol":symbol,"resolution":resolution,"start":start_timestamp,"end":end_timestamp}
-response=requests.get(url,params=params)
-if response.status_code==200:
-    data=response.json()
-    print(f"Retrieved {len(data['result'])} candles:")
-    for candle in data['result']:
-        print(candle)
-else:
-    print("Error:",response.status_code,response.text)
+def get_btc_price():
+    url = "https://api.delta.exchange/v2/tickers"
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception("Failed to fetch tickers")
+    data = response.json()['result']
+    for ticker in data:
+        if ticker['symbol'] == "BTCUSDT":
+            return float(ticker['spot_price'])
+    raise Exception("BTCUSDT ticker not found")
+
+def fetch_option_data():
+    url = "https://api.delta.exchange/v2/products"
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception("Failed to fetch product list")
+    return response.json()['result']
+
+def store_in_db(date_str, data_rows):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(f'''
+        CREATE TABLE IF NOT EXISTS options_{date_str} (symbol TEXT,strike_price INTEGER,expiry TEXT,option_type TEXT,volume REAL)''')
+    cursor.executemany(f'''INSERT INTO options_{date_str} (symbol, strike_price, expiry, option_type, volume)VALUES (?, ?, ?, ?, ?)''',data_rows)
+    conn.commit()
+    conn.close()
+
+def main():
+    print("Starting weekly BTC options data collection...")
+    btc_price = get_btc_price()
+    print(f"Current BTC Price: {btc_price}")
+
+    all_products = fetch_option_data()
+    base_date = datetime(2025, 5, 25, tzinfo=timezone.utc)
+
+    for i in range(7):
+        current_date = base_date + timedelta(days=i)
+        expiry_date = current_date + timedelta(days=3)
+        expiry_str = expiry_date.strftime("%d%m%y")
+        date_str = current_date.strftime("%Y%m%d")
+        print(f"Collecting for {date_str}, expiry: {expiry_str}")
+
+        lower = int((btc_price - 15000) // 100) * 100
+        upper = int((btc_price + 15000) // 100) * 100
+        strike_range = set(range(lower, upper + 1, 100))
+
+        collected = []
+        for product in all_products:
+            if product['underlying_asset']['symbol'] != "BTC":
+                continue
+            if product['contract_type'] not in ['put_options', 'call_options']:
+                continue
+
+            symbol = product['symbol']
+            if not symbol.endswith(expiry_str):
+                continue
+
+            strike_price = product.get('strike_price')
+            if strike_price is None:
+                continue
+            if int(strike_price) not in strike_range:
+                continue
+
+            volume = float(product.get('volume', 0.0))
+            option_type = "call" if product['contract_type'] == "call_options" else "put"
+            collected.append((symbol, int(strike_price), expiry_str, option_type, volume))
+
+        store_in_db(date_str, collected)
+        print(f"Stored {len(collected)} options for {date_str}")
+
+if __name__ == "__main__":
+    main()
