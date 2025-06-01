@@ -32,7 +32,6 @@ def store_in_db(date_str, data_rows):
     conn.close()
 
 def main():
-    print("Starting weekly BTC options data collection...")
     btc_price = get_btc_price()
     print(f"Current BTC Price: {btc_price}")
 
