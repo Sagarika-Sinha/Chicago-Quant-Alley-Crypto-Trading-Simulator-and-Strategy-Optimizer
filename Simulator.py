@@ -1,85 +1,76 @@
 import os
 import pandas as pd
-import sqlite3
-from datetime import datetime, timedelta
-from Strategy import Strategy
 import config
+from Strategy import Strategy
 class Simulator:
-    def __init__(self, configFilePath=None):
-        self.startDate = datetime.strptime(config.simStartDate, "%Y%m%d")
-        self.endDate = datetime.strptime(config.simEndDate, "%Y%m%d")
-        self.symbols = config.symbols
-        self.df = pd.DataFrame()
-        self.currentPrice = {symbol: None for symbol in self.symbols}
-        self.currQuantity = {symbol: 0 for symbol in self.symbols}
-        self.buyValue = {symbol: 0.0 for symbol in self.symbols}
-        self.sellValue = {symbol: 0.0 for symbol in self.symbols}
-        self.slippage = 0.0001
+    def __init__(self):
+        self.df = None
+        self.currentPrice = {}
         self.strategy = Strategy(self)
-        self.readData()
-        self.startSimulation()
+        self.buyValue = {}
+        self.sellValue = {}
+        self.currQuantity = {}
+        self.pnl_log = []
     def readData(self):
-        all_data = []
-        curr_date = self.startDate
-        while curr_date <= self.endDate:
-            date_str = curr_date.strftime("%Y%m%d")
-            conn = sqlite3.connect("tables.db")
-            for symbol in self.symbols:
-                if symbol == "BTCUSDT":
-                    table_name = f"candles_{date_str}"
-                    try:
-                        df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-                        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
-                        df["price"] = df["close"]
-                        df["Symbol"] = symbol
-                        all_data.append(df)
-                    except Exception:
-                        print(f"[WARNING] BTC candle data missing for {date_str}")
-                else:
-                    table_name = f"options_{date_str}"
-                    try:
-                        df = pd.read_sql_query(f"""SELECT * FROM {table_name} WHERE symbol = '{symbol}'""", conn)
-                        df["timestamp"] = pd.Timestamp(curr_date)
-                        df["price"] = df["volume"]  # placeholder: real price should come from tickers or quotes
-                        df["Symbol"] = symbol
-                        all_data.append(df)
-                    except Exception:
-                        print(f"[WARNING] Option data missing for {symbol} on {date_str}")
-            conn.close()
-            curr_date += timedelta(days=1)
-        if all_data:
-            self.df = pd.concat(all_data, ignore_index=True)
-            self.df.sort_values("timestamp", inplace=True)
-        else:
-            print("No data loaded from the database.")
+        data_frames = []
+        dates = pd.date_range(config.startDate, config.endDate).strftime('%Y%m%d')
+
+        for date in dates:
+            folder = os.path.join('data', date)
+            for symbol in config.symbols:
+                file_path = os.path.join(folder, f"MARK:{symbol}.csv")
+                if os.path.exists(file_path):
+                    df = pd.read_csv(file_path)
+                    df["Symbol"] = symbol
+                    data_frames.append(df)
+
+        self.df = pd.concat(data_frames)
+        self.df = self.df.sort_values(by="timestamp")
+        print(f"[INFO] Loaded data shape: {self.df.shape}")
     def startSimulation(self):
         for _, row in self.df.iterrows():
             symbol = row["Symbol"]
-            price = row["price"]
+            price = row["close"]
             self.currentPrice[symbol] = price
             self.strategy.onMarketData(row)
+            total_pnl = 0
+            for sym in config.symbols:
+                buy = self.buyValue.get(sym, 0)
+                sell = self.sellValue.get(sym, 0)
+                qty = self.currQuantity.get(sym, 0)
+                last_price = self.currentPrice.get(sym, 0)
+                total_pnl += sell - buy + qty * last_price
+            self.pnl_log.append([row["timestamp"], total_pnl])
+        os.makedirs("output", exist_ok=True)
+        pd.DataFrame(self.pnl_log, columns=["timestamp", "PnL"]).to_csv("output/timestamped_pnl.csv", index=False)
+        print("[INFO] Saved output/timestamped_pnl.csv")
     def onOrder(self, symbol, side, quantity, price):
-        if side == "BUY":
-            adjusted_price = price * (1 + self.slippage)
-        elif side == "SELL":
-            adjusted_price = price * (1 - self.slippage)
+        slippage = 0.0001
+        if side == "buy":
+            trade_price = price * (1 + slippage)
+            self.currQuantity[symbol] = self.currQuantity.get(symbol, 0) + quantity
+            self.buyValue[symbol] = self.buyValue.get(symbol, 0) + trade_price * quantity
         else:
-            raise ValueError(f"Invalid order side: {side}")
-        trade_value = adjusted_price * quantity
-        if side == "BUY":
-            self.currQuantity[symbol] += quantity
-            self.buyValue[symbol] += trade_value
-        else:
-            self.currQuantity[symbol] -= quantity
-            self.sellValue[symbol] += trade_value
-        self.strategy.onTradeConfirmation(symbol, side, quantity, adjusted_price)
-    def printPnl(self):
-        total_pnl = 0.0
-        for symbol in self.symbols:
-            realized = self.sellValue[symbol] - self.buyValue[symbol]
-            latest_price = self.currentPrice.get(symbol, 0)
-            unrealized = self.currQuantity[symbol] * latest_price
-            total_pnl += realized + unrealized
-        print(f"[PnL] Current Total PnL: {total_pnl:.2f}")
+            trade_price = price * (1 - slippage)
+            self.currQuantity[symbol] = self.currQuantity.get(symbol, 0) - quantity
+            self.sellValue[symbol] = self.sellValue.get(symbol, 0) + trade_price * quantity
+        print(f"[TRADE] {side.upper()} {symbol} @ {trade_price:.2f} x {quantity}")
+        self.strategy.onTradeConfirmation(symbol, side, quantity, trade_price)
+    def printPnL(self):
+        total_pnl = 0
+        for symbol in config.symbols:
+            buy = self.buyValue.get(symbol, 0)
+            sell = self.sellValue.get(symbol, 0)
+            qty = self.currQuantity.get(symbol, 0)
+            last_price = self.currentPrice.get(symbol, 0)
+            pnl = sell - buy + qty * last_price
+            total_pnl += pnl
+        print(f"Buy Value: {self.buyValue}")
+        print(f"Sell Value: {self.sellValue}")
+        print(f"Current Quantity: {self.currQuantity}")
+        print(f"Total PnL: {total_pnl}")
 if __name__ == "__main__":
-    Simulator()
+    sim = Simulator()
+    sim.readData()
+    sim.startSimulation()
+    sim.printPnL()

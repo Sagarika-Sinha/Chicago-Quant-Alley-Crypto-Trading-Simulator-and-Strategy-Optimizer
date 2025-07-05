@@ -2,7 +2,7 @@ import requests
 import os
 import csv
 from datetime import datetime, timedelta, timezone
-HEADERS = {'Accept': 'application/json'}
+HEADERS = {'Accept':'application/json'}
 DATA_DIR = "data"
 def get_btc_price():
     url = "https://api.delta.exchange/v2/tickers"
@@ -66,8 +66,6 @@ def main():
         date_str = current_date.strftime("%Y%m%d")
         folder = os.path.join(DATA_DIR, date_str)
         print(f"\nCollecting options expiring on {target_expiry} for folder {date_str}")
-        lower = int((btc_price - 15000) // 100) * 100
-        upper = int((btc_price + 15000) // 100) * 100
         saved_options = 0
         start_candle_dt = datetime(current_date.year, current_date.month, current_date.day, 0, 0, 0, tzinfo=timezone.utc)
         end_candle_dt = start_candle_dt + timedelta(days=1) - timedelta(seconds=1)
@@ -86,7 +84,7 @@ def main():
             if len(symbol_parts) < 4:
                 continue
             strike_price = product.get('strike_price')
-            if strike_price is None or not (lower <= int(strike_price) <= upper):
+            if strike_price is None:
                 continue
             volume = float(product.get('volume', 0.0))
             option_type = "call" if product['contract_type'] == "call_options" else "put"
