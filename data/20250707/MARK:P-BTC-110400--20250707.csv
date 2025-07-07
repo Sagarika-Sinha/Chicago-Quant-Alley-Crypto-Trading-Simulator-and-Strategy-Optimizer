@@ -1,0 +1,2 @@
+symbol,strike_price,expiry,option_type,volume,timestamp,open,high,low,close,volume_candle
+P-BTC-110400-070725,110400,070725,put,0.0,1751851200,1600,1600,1600,1600,1
