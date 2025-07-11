@@ -1,0 +1,2 @@
+symbol,strike_price,expiry,option_type,volume,timestamp,open,high,low,close,volume_candle
+C-BTC-111600-110725,111600,110725,call,0.0,1752209100,5174,5174,5174,5174,4
