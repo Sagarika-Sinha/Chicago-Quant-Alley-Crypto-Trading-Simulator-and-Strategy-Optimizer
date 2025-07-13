@@ -1,4 +1,4 @@
-# Chicago-Quant-Alley-Crypto-Trading-Simulator-and-Strategy-Optimizer
+# Chicago Quant Alley Crypto Trading Simulator and Strategy Optimizer
 Did this project as part of Seasons of Code 2025.  
 Developed a Mid-Frequency Trading simulator with backtesting and slippage tool on Delta Exchange Options in Python  
 Reduced strategy simulation latency by 3.6% using a vectorized execution engine and optimizing API calls using ccxt  
